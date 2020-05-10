@@ -1,0 +1,19 @@
+{
+  "name": "impute",
+  "version": "0.0.1",
+  "description": "Impute missing values in data",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "watch": "nodemon --watch . --ext js,csv --exec 'node example.js'"
+  },
+  "author": "Anton Zemlyansky",
+  "license": "MIT",
+  "dependencies": {
+    "random-forest": "0.0.6"
+  },
+  "devDependencies": {
+    "mkdata": "0.0.5",
+    "nodemon": "^2.0.3"
+  }
+}
