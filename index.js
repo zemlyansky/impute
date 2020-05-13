@@ -48,7 +48,8 @@ const defaults = {
   maxFeatures: 'auto',
   minSamplesLeaf: 5,
   minInfoGain: 0,
-  verbose: false
+  verbose: false,
+  scaleImp: false
 }
 
 module.exports = function fill (X, opts) {
@@ -108,14 +109,27 @@ module.exports = function fill (X, opts) {
           nEstimators: 100,
           maxDepth: 15
         })
+      const impKind = types[i] === 'regression'
+        ? 'smape'
+        : 'ce'
       rf.train(Xtrain, ytrain)
-      const imp = rf.getFeatureImportances(Xtrain, ytrain, { onlyMeans: true })
+      let imp = rf.getFeatureImportances(Xtrain, ytrain, { onlyMeans: true, kind: impKind })
+      if (options.scaleImp) {
+        const impMax = Math.max.apply(Math, imp)
+        imp = impMax > 0 ? imp.map(v => v / impMax) : imp
+      }
       imp.splice(i, 0, null)
       imps.push(imp)
-      const ypred = rf.predict(Xpred)
-      ypred.forEach((v, ri) => {
-        Ximp[missing[i][ri]][i] = v
-      })
+
+      if (Xpred.length) {
+        const ypred = rf.predict(Xpred)
+        if (ypred.length) {
+          console.log('Impute data:', Xpred, ypred)
+          ypred.forEach((v, ri) => {
+            Ximp[missing[i][ri]][i] = v
+          })
+        }
+      }
     }
     Xbase = Ximp.map(row => row.slice(0))
   }
