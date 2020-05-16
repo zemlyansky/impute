@@ -12,5 +12,6 @@ const Xmiss = Xcomplete.map(
   row => row.map(v => Math.random() < 0.5 ? null : v)
 )
 
-const res = impute(Xmiss, { verbose: true })
+const res = impute(Xmiss, { verbose: true, columns: [1]})
+console.log('Data:', Xcomplete.slice(0, 10).map(row => row[1]), Xmiss.slice(0, 10).map(row => row[1]), res.data.slice(0, 10).map(row => row[1]))
 console.log('Results:', res.importanceMatrix)
