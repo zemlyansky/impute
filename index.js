@@ -1,5 +1,25 @@
 const { RandomForestRegressor, RandomForestClassifier } = require('random-forest')
+const LinReg = require('ml-regression-multivariate-linear')
+const LogRegRaw = require('ml-logistic-regression')
+// const importance = require('../importance/index')
+const importance = require('importance')
+const { Matrix } = require('ml-matrix')
 const { detectType } = require('random-forest/src/util')
+
+class LogReg {
+  constructor (opts) {
+    this.model = new LogRegRaw(opts)
+  }
+
+  train (X, y) {
+    this.model.train(new Matrix(X), Matrix.columnVector(y))
+    return this
+  }
+
+  predict (X) {
+    return this.model.predict(new Matrix(X))
+  }
+}
 
 function isMiss (v) {
   return v === null || v === undefined || v === ''
@@ -23,7 +43,6 @@ function countValues (a, result) {
 function mode (x) {
   const xfil = x.filter(v => !isMiss(v))
   const count = countValues(xfil)
-  console.log(count)
   let maxCount = -Infinity
   let maxValue = null
   Object.keys(count).forEach(val => {
@@ -33,6 +52,24 @@ function mode (x) {
     }
   })
   return maxValue
+}
+
+function encode (X, types) {
+  const Xenc = X.map(row => row.slice(0))
+  const encodings = []
+  for (const ci in types) {
+    if (types[ci] === 'classification') {
+      const col = X.map(row => row[ci])
+      const uniq = Array.from(new Set(col))
+      encodings.push(uniq)
+      col.forEach((v, ri) => {
+        Xenc[ri][ci] = uniq.indexOf(v)
+      })
+    } else {
+      encodings.push(null)
+    }
+  }
+  return [Xenc, encodings]
 }
 
 function fillMeans (Xraw, means) {
@@ -47,13 +84,13 @@ const defaults = {
   maxFeatures: 'auto',
   minSamplesLeaf: 5,
   minInfoGain: 0,
-  model: 'rf',
   nEstimators: 100,
+  model: 'rf',
   scaleImp: false,
   verbose: false
 }
 
-module.exports = function fill (X, opts) {
+module.exports = function impute (X, opts) {
   const options = Object.assign({}, defaults, opts)
   const log = options.verbose ? console.log : () => {}
   const n = X.length
@@ -86,6 +123,7 @@ module.exports = function fill (X, opts) {
   log('Variable types:', types)
   log('Means:', means)
 
+  let encodings
   let Ximp = X.map(row => row.slice(0))
   let Xbase = fillMeans(X, means)
   const Xupd = Xbase.map(row => row.slice(0))
@@ -93,9 +131,11 @@ module.exports = function fill (X, opts) {
 
   if (!options.model) {
     // Mean imputation only
-    Ximp = Ximp.map((row, ri) => row.map((v, ci) => columns.include(ci) ? Xbase[ri][ci] : v))
+    Ximp = Ximp.map((row, ri) => row.map((v, ci) => columns.includes(ci) ? Xbase[ri][ci] : v))
   } else {
     // Model-based imputation
+    // Encode Xbase (mostly for linear models)
+    [Xbase, encodings] = encode(Xbase, types)
     for (let iter = 0; iter < options.maxIter; iter++) {
       log('Iteration', iter + 1)
       for (const i of columns) {
@@ -109,34 +149,42 @@ module.exports = function fill (X, opts) {
         const Xpred = Xbase
           .map(row => row.filter((_, ci) => ci !== i))
           .filter((_, ri) => missing[i].includes(ri))
-        const rf = types[i] === 'regression'
-          ? new RandomForestRegressor({
-            nEstimators: 100,
-            maxDepth: 15
-          })
-          : new RandomForestClassifier({
-            nEstimators: 100,
-            maxDepth: 15
-          })
+        let model
+        if (options.model === 'rf') {
+          model = types[i] === 'regression'
+            ? new RandomForestRegressor({
+              nEstimators: 100,
+              maxDepth: 15
+            })
+            : new RandomForestClassifier({
+              nEstimators: 100,
+              maxDepth: 15
+            })
+          model.train(Xtrain, ytrain)
+        } else {
+          model = types[i] === 'regression'
+            ? new LinReg(Xtrain, ytrain.map(v => [v]))
+            : new LogReg({
+              numSteps: 1000,
+              learningRate: 5e-3
+            }).train(Xtrain, ytrain)
+        }
         const impKind = types[i] === 'regression'
           ? 'smape'
-          : 'ce'
-        rf.train(Xtrain, ytrain)
-        let imp = rf.getFeatureImportances(Xtrain, ytrain, { onlyMeans: true, kind: impKind })
-        if (options.scaleImp) {
-          const impMax = Math.max.apply(Math, imp)
-          imp = impMax > 0 ? imp.map(v => v / impMax) : imp
-        }
+          : options.model === 'lr' ? 'acc' : 'ce'
+        const imp = importance(model, Xtrain, ytrain, { onlyMeans: true, kind: impKind, scale: options.scaleImp, verbose: options.verbose })
         imp.splice(i, 0, null)
         imps.push(imp)
 
         if (Xpred.length) {
-          const ypred = rf.predict(Xpred)
+          const ypred = model.predict(Xpred).flat()
           if (ypred.length) {
-            console.log('Impute data:', Xpred, ypred)
             ypred.forEach((v, ri) => {
-              Xupd[missing[i][ri]][i] = v
-              Ximp[missing[i][ri]][i] = v
+              const res = types[i] === 'regression'
+                ? v
+                : encodings[i][v]
+              Xupd[missing[i][ri]][i] = res
+              Ximp[missing[i][ri]][i] = res
             })
           }
         }
@@ -144,6 +192,7 @@ module.exports = function fill (X, opts) {
       Xbase = Xupd.map(row => row.slice(0))
     } // *for iteration
   } // *else
+  log('Importances:', imps)
 
   return {
     data: Ximp,
